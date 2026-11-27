@@ -4,11 +4,11 @@ EXAMLY is a responsive, frontend-based online examination platform built with Re
 
 ## Live Demo
 
-[View Live Website](YOUR_LIVE_WEBSITE_URL)
+[View Live Website](https://rishikathallapally.github.io/online-examination-platform/)
 
 ## GitHub Repository
 
-[View Source Code](YOUR_GITHUB_REPOSITORY_URL)
+[View Source Code](https://github.com/rishikathallapally/online-examination-platform)
 
 ## Features
 
