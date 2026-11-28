@@ -207,6 +207,60 @@ function saveExamResult(exam, score, totalQuestions) {
   }
 }
 
+// Create a separate storage key for each examination.
+function getExamProgressKey(exam) {
+  return exam?.title
+    ? `examProgress_${encodeURIComponent(exam.title)}`
+    : null;
+}
+
+// Load previously saved progress for an examination.
+function loadExamProgress(exam, totalQuestions) {
+  const key = getExamProgressKey(exam);
+
+  if (!key) return null;
+
+  try {
+    const savedProgress = JSON.parse(localStorage.getItem(key));
+
+    if (!savedProgress || typeof savedProgress !== "object") {
+      return null;
+    }
+
+    const answers =
+      savedProgress.answers &&
+      typeof savedProgress.answers === "object" &&
+      !Array.isArray(savedProgress.answers)
+        ? savedProgress.answers
+        : {};
+
+    const markedForReview = Array.isArray(savedProgress.markedForReview)
+      ? savedProgress.markedForReview.filter(
+          (index) =>
+            Number.isInteger(index) &&
+            index >= 0 &&
+            index < totalQuestions
+        )
+      : [];
+
+    return {
+      answers,
+      currentQuestion: Math.min(
+        Math.max(savedProgress.currentQuestion || 0, 0),
+        Math.max(totalQuestions - 1, 0)
+      ),
+      timeLeft:
+        Number.isFinite(savedProgress.timeLeft) && savedProgress.timeLeft > 0
+          ? savedProgress.timeLeft
+          : null,
+      markedForReview,
+    };
+  } catch (error) {
+    console.error("Unable to load exam progress:", error);
+    return null;
+  }
+}
+
 function TakeExam() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -221,10 +275,23 @@ function TakeExam() {
     () => (examTitle ? questionBank[examTitle] || [] : []),
     [examTitle]
   );
-  const [currentQuestion, setCurrentQuestion] = useState(0);
-  const [answers, setAnswers] = useState({});
+  const savedProgress = useMemo(
+    () => loadExamProgress(exam, questions.length),
+    [exam, questions.length]
+  );
+  const [currentQuestion, setCurrentQuestion] = useState(
+    () => savedProgress?.currentQuestion ?? 0
+  );
+  const [markedForReview, setMarkedForReview] = useState(
+    () => savedProgress?.markedForReview ?? []
+  );
+  const [answers, setAnswers] = useState(
+    () => savedProgress?.answers ?? {}
+  );
   const [timeLeft, setTimeLeft] = useState(
-    () => (Number.parseInt(exam?.duration, 10) || 30) * 60
+    () =>
+      savedProgress?.timeLeft ??
+      (Number.parseInt(exam?.duration, 10) || 30) * 60
   );
 
   // Submit the examination and save its result.
@@ -235,6 +302,15 @@ function TakeExam() {
 
     hasSubmitted.current = true;
 
+    try {
+      const progressKey = getExamProgressKey(exam);
+
+      if (progressKey) {
+        localStorage.removeItem(progressKey);
+      }
+    } catch (error) {
+      console.error("Unable to clear exam progress:", error);
+    }
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -297,11 +373,34 @@ function TakeExam() {
   }, [exam]);
 
   // Automatically submit when the timer reaches zero.
-  useEffect(() => {
+useEffect(() => {
     if (timeLeft === 0) {
       finishExam();
     }
-  }, [timeLeft, finishExam]);
+}, [timeLeft, finishExam]);
+
+  // Save the current examination progress in the browser.
+useEffect(() => {
+  if (!exam || hasSubmitted.current || timeLeft <= 0) return;
+
+  const progressKey = getExamProgressKey(exam);
+
+  if (!progressKey) return;
+
+  try {
+    localStorage.setItem(
+      progressKey,
+      JSON.stringify({
+        answers,
+        currentQuestion,
+        timeLeft,
+        markedForReview,
+      })
+    );
+  } catch (error) {
+    console.error("Unable to save exam progress:", error);
+  }
+  }, [exam, answers, currentQuestion, timeLeft, markedForReview]);
 
   // Format seconds as MM:SS.
   const formatTime = (seconds) => {
@@ -327,6 +426,13 @@ function TakeExam() {
       ...previousAnswers,
       [currentQuestion]: option,
     }));
+  };
+  const handleMarkForReview = () => {
+    setMarkedForReview((prev) =>
+      prev.includes(currentQuestion)
+        ? prev.filter((index) => index !== currentQuestion)
+        : [...prev, currentQuestion]
+    );
   };
 
   // Check the user's submission preference.
@@ -522,7 +628,24 @@ function TakeExam() {
             </div>
           </fieldset>
 
-          {/* Navigation Buttons */}
+        {/* Navigation Buttons */}
+          {/* Mark for Review */}
+          <div className="mt-6">
+            <button
+              type="button"
+              onClick={handleMarkForReview}
+              aria-pressed={markedForReview.includes(currentQuestion)}
+              className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 ${
+              markedForReview.includes(currentQuestion)
+              ? "border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400"
+              : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+            }`}
+            >
+              {markedForReview.includes(currentQuestion)
+              ? "Remove Review Mark"
+              : "Mark for Review"}
+            </button>
+          </div>
           <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3 mt-8 sm:mt-10">
             <button
               type="button"
@@ -581,7 +704,7 @@ function TakeExam() {
             {questions.map((item, index) => {
               const isCurrent = currentQuestion === index;
               const isAnswered = answers[index] !== undefined;
-
+              const isMarkedForReview = markedForReview.includes(index);
               return (
                 <button
                   key={item.id}
@@ -590,6 +713,8 @@ function TakeExam() {
                   aria-label={`Question ${index + 1}, ${
                     isCurrent
                       ? "current question"
+                      : isMarkedForReview
+                      ? "marked for review"
                       : isAnswered
                       ? "answered"
                       : "not answered"
@@ -598,6 +723,8 @@ function TakeExam() {
                   className={`h-10 rounded-lg text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900 ${
                     isCurrent
                       ? "bg-purple-600 text-white"
+                      : isMarkedForReview
+                      ? "bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400"
                       : isAnswered
                       ? "bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400"
                       : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
@@ -620,7 +747,10 @@ function TakeExam() {
               <span className="w-3 h-3 rounded-sm bg-green-500" aria-hidden="true" />
               Answered
             </div>
-
+            <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+              <span className="w-3 h-3 rounded-sm bg-amber-400" aria-hidden="true"/>
+              Marked for Review
+            </div>
             <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
               <span className="w-3 h-3 rounded-sm bg-slate-200 dark:bg-slate-600" aria-hidden="true" />
               Not Answered
